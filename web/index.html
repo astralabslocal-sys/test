@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>WiFiMon – WLAN</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0'/%3E%3Ccircle cx='12' cy='19' r='1.2' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .grade { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; font-size: 22px; font-weight: 700; margin-right: 10px; }
+  .grade.good { background: var(--good-bg); } .grade.warn { background: var(--warn-bg); } .grade.bad { background: var(--bad-bg); }
+  .rec { font-size: 14px; margin: 0 0 12px; }
+  .rec b { font-variant-numeric: tabular-nums; }
+  tr.own td { font-weight: 650; }
+  tr.own td:first-child::after { content: " (du)"; color: var(--accent); font-weight: 500; }
+  .sig { display: inline-block; width: 60px; height: 5px; background: var(--line); border-radius: 3px; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+  .sig i { display: block; height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top" id="top"></header>
+
+  <div class="bar">
+    <select id="dev" aria-label="Gerät"></select>
+    <div class="seg" id="range">
+      <button data-h="6">6 Std</button><button data-h="24" class="on">24 Std</button><button data-h="168">7 Tage</button>
+    </div>
+    <button class="btn" id="speedBtn">Speedtest starten</button>
+    <span class="spacer"></span>
+    <span class="meta" id="meta">lädt …</span>
+  </div>
+
+  <div id="banners"></div>
+
+  <section class="card" id="onboard" hidden>
+    <h2>Noch kein Mess-Gerät verbunden</h2>
+    <p>Starte auf einem PC oder Laptop in deinem WLAN den Agent. Er schickt dann jede Minute Messwerte hierher:</p>
+    <pre id="onboardCmd" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto"></pre>
+    <p class="sub">Den Schlüssel findest du in Railway unter <b>Variables → WIFIMON_TOKEN</b>. Für den Autostart unter Windows: <code>install-agent.ps1</code> (siehe README). Handys brauchen keinen Agent – die richtest du unter <a href="/adblock">Werbeblocker</a> ein.</p>
+  </section>
+
+  <div id="main">
+  <section class="grid">
+    <div class="card">
+      <h2>Verbindung</h2>
+      <div class="big" id="sigVal">–</div>
+      <div class="meter"><i id="sigBar"></i></div>
+      <div class="rows" id="linkRows"></div>
+    </div>
+    <div class="card">
+      <h2>Latenz (aktuell)</h2>
+      <div class="rows" id="pingRows"></div>
+    </div>
+    <div class="card">
+      <h2>Geschwindigkeit</h2>
+      <div class="big" id="downVal">–</div>
+      <div class="sub" id="upVal"></div>
+      <div class="sub" id="speedAge"></div>
+    </div>
+    <div class="card">
+      <h2>Bufferbloat</h2>
+      <div style="display:flex;align-items:center"><span class="grade" id="bloatGrade">–</span><span id="bloatText" class="sub" style="margin:0"></span></div>
+      <div class="sub">Latenz-Anstieg, wenn die Leitung voll ausgelastet ist. Wichtig für Spiele und Videocalls.</div>
+    </div>
+    <div class="card">
+      <h2>Stabilität (Zeitraum)</h2>
+      <div class="rows" id="stabRows"></div>
+    </div>
+  </section>
+
+  <section class="charts">
+    <div class="card"><h2>Latenz (ms)</h2><div class="chart"><canvas id="chPing"></canvas></div></div>
+    <div class="card"><h2>Paketverlust (%)</h2><div class="chart"><canvas id="chLoss"></canvas></div></div>
+    <div class="card"><h2>Signalstärke (dBm)</h2><div class="chart"><canvas id="chSig"></canvas></div></div>
+    <div class="card"><h2>Geschwindigkeit (Mbit/s)</h2><div class="chart"><canvas id="chSpeed"></canvas></div></div>
+  </section>
+
+  <section class="card">
+    <h2>Kanal-Scan <span class="count" id="scanAge"></span></h2>
+    <p class="rec" id="rec"></p>
+    <div class="charts" style="margin-bottom:6px">
+      <div><div class="sub" style="margin-bottom:6px">2,4 GHz – Netze pro Kanal</div><div class="chart small"><canvas id="chCh24"></canvas></div></div>
+      <div><div class="sub" style="margin-bottom:6px">5 GHz – Netze pro Kanal</div><div class="chart small"><canvas id="chCh5"></canvas></div></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Netz</th><th>Band</th><th>Kanal</th><th>Signal</th><th>Sicherheit</th></tr></thead>
+      <tbody id="netRows"></tbody>
+    </table></div>
+  </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/app.js"></script>
+<script>
+"use strict";
+nav("wlan");
+let hours = 24;
+let device = null;
+const charts = {};
+const q = (path, extra = "") => `${path}?device=${encodeURIComponent(device)}${extra}`;
+
+function fmtTick(v) {
+  const d = new Date(v * 1000);
+  return hours <= 24
+    ? d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit" });
+}
+function sigQuality(dbm) {
+  if (dbm == null) return ["–", "muted"];
+  if (dbm >= -50) return ["Ausgezeichnet", "good"];
+  if (dbm >= -60) return ["Gut", "good"];
+  if (dbm >= -67) return ["Okay", "warn"];
+  if (dbm >= -75) return ["Schwach", "bad"];
+  return ["Sehr schwach", "bad"];
+}
+const latClass = (ms) => (ms == null ? "bad" : ms < 30 ? "good" : ms < 80 ? "warn" : "bad");
+const lossClass = (p) => (p == null ? "muted" : p === 0 ? "good" : p < 2 ? "warn" : "bad");
+const row = (k, v, cls = "") => `<div class="row"><span>${esc(k)}</span><span class="${cls}">${v}</span></div>`;
+
+function bloatGrade(idle, loaded) {
+  if (idle == null || loaded == null) return ["–", "muted", "Noch keine Messung"];
+  const d = loaded - idle;
+  const g = d < 5 ? ["A", "good"] : d < 30 ? ["B", "good"] : d < 60 ? ["C", "warn"] : d < 200 ? ["D", "bad"] : ["F", "bad"];
+  return [...g, `+${num(d)} ms unter Last (${num(idle)} → ${num(loaded)} ms)`];
+}
+
+// --- Status ------------------------------------------------------------------
+function renderStatus(st, dv) {
+  const L = st.link || {};
+  const I = st.info || {};
+  const banners = [];
+  if (!dv.persistent) banners.push(["warn", "Kein Railway-Volume eingebunden: Beim nächsten Deploy sind alle Daten weg. In Railway ein Volume mit Mount-Pfad <b>/data</b> anlegen."]);
+  const me = dv.devices.find((d) => d.device === device) || {};
+  if (me.demo) banners.push(["info", "Demo-Gerät: alle Werte sind simuliert."]);
+  if (!me.online) banners.push(["bad", `Gerät <b>${esc(device)}</b> meldet sich nicht mehr (zuletzt ${ago(I.last_seen, st.now)}). Läuft der Agent noch?`]);
+  if (!I.iface) banners.push(["bad", "Auf diesem Gerät wurde kein WLAN-Adapter gefunden."]);
+  else if (!L.connected) banners.push(["bad", "WLAN ist gerade nicht verbunden."]);
+  if (I.iface && I.route_dev && I.route_dev !== I.iface)
+    banners.push(["warn", `Der Internetverkehr läuft über <b>${esc(I.route_dev)}</b>, nicht über ${esc(I.iface)}. Pings werden ans WLAN gebunden. ${I.platform === "windows" ? "Der Speedtest auch." : "Der Speedtest misst aber die Kabelverbindung – für reine WLAN-Werte das Kabel abziehen."}`]);
+  $("#banners").innerHTML = banners.map(([c, t]) => `<div class="banner ${c}">${t}</div>`).join("");
+
+  $("#meta").textContent = `${I.platform || "?"} · ${I.iface || "kein WLAN"} · v${st.version} · ${new Date(st.now * 1000).toLocaleTimeString("de-DE")}`;
+
+  const [qq, qc] = sigQuality(L.signal);
+  $("#sigVal").innerHTML = L.connected ? `${num(L.signal)} <small>dBm · <span class="${qc}">${qq}</span></small>` : `<span class="bad">getrennt</span>`;
+  const pct = L.signal == null ? 0 : Math.max(0, Math.min(100, 2 * (L.signal + 100)));
+  $("#sigBar").style.width = `${pct}%`;
+  $("#sigBar").style.background = css(`--${qc === "muted" ? "line" : qc}`);
+  $("#linkRows").innerHTML = L.connected
+    ? row("Netz", esc(L.ssid || "verborgen")) +
+      row("Band · Kanal", `${esc(L.band)} GHz · ${esc(L.channel)}`) +
+      row("Bitrate ↓ / ↑", `${num(L.rx_rate)} / ${num(L.tx_rate)} Mbit/s`) +
+      row("Router", esc(I.gateway || "–"))
+    : row("Status", "keine Verbindung", "bad");
+
+  $("#pingRows").innerHTML = st.pings.length
+    ? st.pings.map((p) => `
+      <div class="row"><span>${esc(p.label)}</span>
+        <span><b class="${latClass(p.rtt_avg)}">${p.rtt_avg == null ? "keine Antwort" : num(p.rtt_avg, 1) + " ms"}</b>
+        <span class="muted"> ± ${num(p.jitter, 1)}</span> · <span class="${lossClass(p.loss)}">${num(p.loss)} %</span></span></div>`).join("") +
+      `<div class="sub">Mittelwert ± Schwankung (Jitter) · Paketverlust</div>`
+    : `<div class="sub">Noch keine Messung.</div>`;
+
+  const S = st.speed;
+  if (S && (S.down != null || S.up != null)) {
+    $("#downVal").innerHTML = `${num(S.down)} <small>Mbit/s ↓</small>`;
+    $("#upVal").innerHTML = `${num(S.up)} Mbit/s ↑ · ${num(S.mb_used)} MB Datenverbrauch`;
+  } else {
+    $("#downVal").innerHTML = "–";
+    $("#upVal").textContent = S && S.error ? `Fehler: ${S.error}` : "";
+  }
+  $("#speedAge").textContent = st.speed_running ? "Speedtest läuft …" : `Letzte Messung ${ago(S && S.ts, st.now)}`;
+  const [g, gc, gt] = bloatGrade(S && S.idle_ping, S && S.loaded_ping);
+  $("#bloatGrade").textContent = g;
+  $("#bloatGrade").className = `grade ${gc}`;
+  $("#bloatText").textContent = gt;
+
+  const btn = $("#speedBtn");
+  btn.disabled = st.speed_running;
+  btn.textContent = st.speed_running ? "Speedtest läuft …" : "Speedtest starten";
+}
+
+// --- Diagramme ---------------------------------------------------------------
+function setChart(id, type, datasets, opts = {}) {
+  if (typeof Chart === "undefined") return;
+  if (charts[id]) {
+    charts[id].data.datasets = datasets;
+    if (opts.labels) charts[id].data.labels = opts.labels;
+    Object.assign(charts[id].options.scales.x, opts.x || {});
+    charts[id].update("none");
+    return;
+  }
+  const grid = css("--line");
+  charts[id] = new Chart(document.getElementById(id), {
+    type,
+    data: { datasets, labels: opts.labels },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, normalized: true,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: datasets.length > 1, labels: { boxWidth: 10, boxHeight: 10, color: css("--muted") } },
+        tooltip: { callbacks: opts.labels ? {} : { title: (items) => new Date(items[0].parsed.x * 1000).toLocaleString("de-DE") } },
+      },
+      scales: {
+        x: opts.labels
+          ? { grid: { display: false }, ticks: { color: css("--muted") } }
+          : { type: "linear", grid: { color: grid }, ticks: { color: css("--muted"), maxTicksLimit: 7, callback: fmtTick }, ...(opts.x || {}) },
+        y: { grid: { color: grid }, ticks: { color: css("--muted"), precision: 0 }, beginAtZero: opts.zero !== false, ...(opts.y || {}) },
+      },
+      elements: { point: { radius: 0, hitRadius: 6 }, line: { borderWidth: 1.8, tension: 0.25 } },
+    },
+  });
+}
+
+function series(rows, label, key) {
+  return rows.filter((r) => r.label === label).map((r) => ({ x: r.t, y: r[key] }));
+}
+const COLORS = ["--c1", "--c2", "--c3", "--c4"];
+
+function renderHistory(h) {
+  const labels = [...new Set(h.ping.map((r) => r.label))];
+  const x = { min: h.since, max: nowS() };
+  const ds = (key) => labels.map((l, i) => ({
+    label: l, data: series(h.ping, l, key), borderColor: css(COLORS[i % 4]), backgroundColor: css(COLORS[i % 4]), spanGaps: false,
+  }));
+  setChart("chPing", "line", ds("avg"), { x });
+  setChart("chLoss", "line", ds("loss"), { x, y: { suggestedMax: 5 } });
+  setChart("chSig", "line", [{
+    label: "Signal", data: h.link.map((r) => ({ x: r.t, y: r.signal })), borderColor: css("--c2"),
+    backgroundColor: css("--c2"), fill: false,
+  }], { x, zero: false, y: { suggestedMin: -85, suggestedMax: -35 } });
+  setChart("chSpeed", "line", [
+    { label: "Download", data: h.speed.map((r) => ({ x: r.ts, y: r.down })), borderColor: css("--c1"), backgroundColor: css("--c1"), pointRadius: 2.5 },
+    { label: "Upload", data: h.speed.map((r) => ({ x: r.ts, y: r.up })), borderColor: css("--c3"), backgroundColor: css("--c3"), pointRadius: 2.5 },
+  ], { x });
+
+  const L = h.link_summary || {};
+  const offPct = L.samples ? (100 * L.offline_samples) / L.samples : null;
+  $("#stabRows").innerHTML =
+    row("Verbindungsabbrüche", num(L.drops), L.drops ? "warn" : "good") +
+    row("Online-Zeit", offPct == null ? "–" : `${num(100 - offPct, 2)} %`, offPct > 0.5 ? "warn" : "good") +
+    h.ping_summary.map((p) =>
+      row(`Verlust ${p.label}`, `${num(p.loss, 2)} %`, lossClass(p.loss > 0 && p.loss < 0.1 ? 0 : p.loss)) +
+      row(`Ping ${p.label} Ø / max`, `${num(p.avg, 1)} / ${num(p.worst)} ms`)).join("");
+}
+
+// --- Kanal-Scan --------------------------------------------------------------
+function renderScan(sc, now) {
+  $("#scanAge").textContent = sc.ts ? `· ${ago(sc.ts, now)}` : "";
+  const nets = sc.networks || [];
+  const own = sc.own || {};
+  const R = sc.recommendation || {};
+  const parts = [];
+  if (R["2.4"]) {
+    const b = R["2.4"].best;
+    const mine = own.band === "2.4" ? (own.channel === b ? " – du nutzt ihn bereits 👍" : ` (aktuell: ${own.channel})`) : "";
+    parts.push(`2,4 GHz: Kanal <b>${b}</b> ist am wenigsten gestört${mine}.`);
+  }
+  if (R["5"]) {
+    const b = R["5"].best_non_dfs;
+    const inBlock = own.band === "5" && own.channel >= b && own.channel < b + 16;
+    parts.push(`5 GHz: Kanäle <b>${b}–${b + 12}</b> sind am freiesten${inBlock ? " – du bist schon dort 👍" : ""}.`);
+  }
+  $("#rec").innerHTML = nets.length
+    ? parts.join("<br>") + `<br><span class="muted">Den Kanal stellst du im Router ein. Am besten nutzt du 5 GHz, solange das Signal reicht.</span>`
+    : "Noch kein Scan vorhanden.";
+
+  const chBars = (band, chans) => {
+    const counts = Object.fromEntries(chans.map((c) => [c, 0]));
+    nets.filter((n) => n.band === band && n.channel).forEach((n) => { counts[n.channel] = (counts[n.channel] || 0) + 1; });
+    const keys = Object.keys(counts).map(Number).sort((a, b) => a - b);
+    const col = keys.map((k) => (own.band === band && own.channel === k ? css("--c3") : css("--c1")));
+    return [keys.map(String), [{ label: "Netze", data: keys.map((k) => counts[k]), backgroundColor: col, borderRadius: 3 }]];
+  };
+  const [l24, d24] = chBars("2.4", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  setChart("chCh24", "bar", d24, { labels: l24 });
+  const [l5, d5] = chBars("5", [36, 40, 44, 48]);
+  setChart("chCh5", "bar", d5, { labels: l5 });
+
+  $("#netRows").innerHTML = nets.map((n) => `
+    <tr class="${own.bssid && n.bssid === own.bssid ? "own" : ""}">
+      <td>${n.ssid ? esc(n.ssid) : '<span class="muted">(verborgen)</span>'}</td>
+      <td>${esc(n.band)} GHz</td><td>${esc(n.channel)}</td>
+      <td><span class="sig"><i style="width:${Number(n.signal_pct) || 0}%"></i></span>${num(n.signal)} dBm</td>
+      <td class="muted">${esc(n.security || "offen")}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty">Keine Netze gefunden.</td></tr>`;
+}
+
+// --- Ablauf ------------------------------------------------------------------
+function renderDevices(dv) {
+  const sel = $("#dev");
+  const names = dv.devices.map((d) => d.device);
+  if (!names.includes(device)) device = names.includes(store.get("wifimon.device")) ? store.get("wifimon.device") : names[0] || null;
+  sel.innerHTML = dv.devices.map((d) =>
+    `<option value="${esc(d.device)}"${d.device === device ? " selected" : ""}>${d.online ? "●" : "○"} ${esc(d.device)}</option>`).join("");
+  sel.hidden = names.length === 0;
+  $("#range").hidden = names.length === 0;
+  $("#onboard").hidden = names.length > 0;
+  $("#main").hidden = names.length === 0;
+  $("#speedBtn").hidden = names.length === 0;
+  if (!names.length) {
+    $("#meta").textContent = dv.ingest_enabled ? "wartet auf Mess-Geräte" : "WIFIMON_TOKEN fehlt auf dem Hub";
+    $("#onboardCmd").textContent =
+      `python agent.py --hub ${location.origin} --token <WIFIMON_TOKEN> --name Mein-PC --once\n` +
+      `# klappt der Test, ohne --once dauerhaft starten`;
+    $("#banners").innerHTML = dv.ingest_enabled ? "" :
+      `<div class="banner bad">Auf dem Hub ist <b>WIFIMON_TOKEN</b> nicht gesetzt – Mess-Geräte können noch keine Daten schicken.</div>`;
+  }
+}
+
+async function refresh() {
+  try {
+    const dv = await api("/api/devices");
+    renderDevices(dv);
+    if (!device) return null;
+    const [st, h, sc] = await Promise.all([api(q("/api/status")), api(q("/api/history", `&hours=${hours}`)), api(q("/api/scan"))]);
+    renderStatus(st, dv);
+    renderHistory(h);
+    renderScan(sc, st.now);
+    return st;
+  } catch (e) {
+    $("#banners").innerHTML = `<div class="banner bad">Keine Verbindung zum Hub: ${esc(e.message)}</div>`;
+  }
+}
+
+$("#dev").addEventListener("change", (e) => {
+  device = e.target.value;
+  store.set("wifimon.device", device);
+  refresh();
+});
+
+$("#range").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  hours = Number(b.dataset.h);
+  $$("#range button").forEach((x) => x.classList.toggle("on", x === b));
+  refresh();
+});
+
+$("#speedBtn").addEventListener("click", async () => {
+  $("#speedBtn").disabled = true;
+  $("#speedBtn").textContent = "Speedtest läuft …";
+  await api(q("/api/speedtest"), { method: "POST" }).catch(() => {});
+  // Ein entferntes Gerät holt sich den Auftrag erst bei seiner nächsten Meldung ab (bis zu 1 Min)
+  const started = Date.now();
+  const poll = setInterval(async () => {
+    const st = await refresh();
+    if ((st && !st.speed_running) || Date.now() - started > 180000) clearInterval(poll);
+  }, 5000);
+});
+
+if (typeof Chart === "undefined") {
+  $$(".chart").forEach((c) => { c.innerHTML = '<div class="sub">Diagramme brauchen Internet (Chart.js wird von cdnjs geladen).</div>'; });
+}
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

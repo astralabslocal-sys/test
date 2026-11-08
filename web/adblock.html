@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>WiFiMon – Werbeblocker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0'/%3E%3Ccircle cx='12' cy='19' r='1.2' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .toplist { display: grid; gap: 2px; font-size: 14px; }
+  .toplist .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .toplist .item:last-child { border-bottom: 0; }
+  .toplist .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .toplist .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rulelist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .rulelist span { display: inline-flex; align-items: center; gap: 6px; background: var(--soft); border-radius: 8px; padding: 3px 4px 3px 9px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  .rulelist button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; }
+  #setup[hidden] { display: none; }
+  #setup .tabbody { font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top" id="top"></header>
+
+  <div class="bar">
+    <div class="seg" id="range"><button data-h="24" class="on">24 Std</button><button data-h="168">7 Tage</button></div>
+    <span id="statePill"></span>
+    <span class="spacer"></span>
+    <div class="seg" id="pause" aria-label="Pausieren">
+      <button data-m="5">5 Min aus</button><button data-m="60">1 Std aus</button><button data-m="0">An</button>
+    </div>
+  </div>
+
+  <div id="banners"></div>
+
+  <section class="grid">
+    <div class="card"><h2>Anfragen</h2><div class="big" id="sTotal">–</div><div class="sub" id="sRange"></div></div>
+    <div class="card"><h2>Geblockt</h2><div class="big" id="sBlocked">–</div><div class="sub" id="sPct"></div></div>
+    <div class="card"><h2>Sperrliste</h2><div class="big" id="sList">–</div><div class="sub" id="sListAge"></div>
+      <button class="btn ghost small" id="refreshList" style="margin-top:8px">Jetzt aktualisieren</button></div>
+    <div class="card"><h2>Geräte</h2><div class="big" id="sClients">–</div><div class="sub" id="sClientsSub"></div></div>
+  </section>
+
+  <section class="card">
+    <h2>Anfragen pro Stunde</h2>
+    <div class="chart"><canvas id="chTimeline"></canvas></div>
+  </section>
+
+  <section class="card">
+    <h2>Meine Geräte <span class="count muted">· jedes Gerät bekommt eine eigene, geheime Adresse</span></h2>
+    <form class="inline" id="addForm" style="margin-bottom:12px">
+      <input type="text" id="newName" placeholder="z. B. Handy, Laptop, PC" maxlength="40" required aria-label="Gerätename">
+      <button class="btn" type="submit">Gerät hinzufügen</button>
+    </form>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Gerät</th><th>Status</th><th>Zuletzt</th><th>Letzte IP</th><th>Anfragen</th><th>Geblockt</th><th></th></tr></thead>
+      <tbody id="clientRows"></tbody>
+    </table></div>
+
+    <div id="setup" hidden style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <h2>Einrichten: <span id="setupName" style="text-transform:none;letter-spacing:0;color:var(--fg)"></span></h2>
+      <div class="copy"><input type="text" id="setupUrl" readonly aria-label="DNS-Adresse"><button class="btn" type="button" id="copyUrl">Kopieren</button></div>
+      <div class="sub">Diese Adresse ist wie ein Schlüssel – nur auf diesem einen Gerät eintragen.</div>
+      <div class="tabs" id="setupTabs">
+        <button data-t="android" class="on">Android</button><button data-t="iphone">iPhone / iPad</button>
+        <button data-t="pc">Windows-PC / Laptop</button><button data-t="mac">Mac</button>
+      </div>
+      <div class="tabbody" data-t="android">
+        <b>Ganzes Handy (alle Apps):</b>
+        <ol class="steps">
+          <li>App <b>„Intra"</b> oder <b>„RethinkDNS"</b> aus dem Play Store installieren.</li>
+          <li>In der App „DNS-over-HTTPS" → <i>Benutzerdefinierte Server-URL</i> wählen und die Adresse oben einfügen.</li>
+          <li>Einschalten. Android fragt einmal, ob die App ein VPN anlegen darf – das ist nur der DNS-Filter, mit <b>OK</b> bestätigen.</li>
+        </ol>
+        <b>Nur im Chrome-Browser:</b>
+        <ol class="steps"><li>Chrome → ⋮ → Einstellungen → Datenschutz und Sicherheit → <i>Sicheres DNS verwenden</i> → <i>Anbieter auswählen: Benutzerdefiniert</i> → Adresse einfügen.</li></ol>
+        <div class="sub">Hinweis: Androids eigenes Feld „Privates DNS" akzeptiert keine https-Adressen – deshalb die App.</div>
+      </div>
+      <div class="tabbody" data-t="iphone" hidden>
+        <ol class="steps">
+          <li>Diese Seite <b>auf dem iPhone in Safari</b> öffnen und anmelden.</li>
+          <li><a id="iosLink" class="btn small" href="#">Profil laden</a> antippen → <i>Zulassen</i>.</li>
+          <li>Einstellungen öffnen → oben <i>„Profil geladen"</i> → <b>Installieren</b>.</li>
+          <li>Fertig. Ausschalten: Einstellungen → Allgemein → VPN und Geräteverwaltung → DNS.</li>
+        </ol>
+      </div>
+      <div class="tabbody" data-t="pc" hidden>
+        <b>Chrome:</b> Einstellungen → Datenschutz und Sicherheit → Sicherheit → <i>Sicheres DNS verwenden</i> → <i>Benutzerdefiniert</i> → Adresse einfügen.<br>
+        <b>Edge:</b> Einstellungen → Datenschutz, Suche und Dienste → Sicherheit → <i>Sicheres DNS verwenden</i> → <i>Dienstanbieter auswählen</i> → Adresse einfügen.<br>
+        <b>Firefox:</b> Einstellungen → Datenschutz &amp; Sicherheit → <i>DNS über HTTPS</i> → <i>Maximaler Schutz</i> → Anbieter <i>Benutzerdefiniert</i> → Adresse einfügen.
+        <div class="sub">Jeder Browser braucht die Einstellung einzeln. Für jeden PC ein eigenes Gerät anlegen.</div>
+      </div>
+      <div class="tabbody" data-t="mac" hidden>
+        Am einfachsten wie beim iPhone: diese Seite in <b>Safari</b> öffnen, <a id="macLink" href="#">Profil laden</a>,
+        dann Systemeinstellungen → Datenschutz &amp; Sicherheit → <i>Profile</i> → Installieren. Alternativ in Chrome/Firefox wie beim PC.
+      </div>
+    </div>
+  </section>
+
+  <section class="grid two">
+    <div class="card"><h2>Am häufigsten geblockt</h2><div class="toplist" id="topBlocked"></div></div>
+    <div class="card"><h2>Am häufigsten erlaubt</h2><div class="toplist" id="topAllowed"></div></div>
+  </section>
+
+  <section class="card">
+    <h2>Protokoll <span class="count muted">· die letzten Anfragen, aktualisiert alle 15 s</span></h2>
+    <form class="inline" id="logFilter" style="margin-bottom:10px">
+      <select id="fClient" aria-label="Gerät"><option value="">Alle Geräte</option></select>
+      <div class="seg" id="fBlocked"><button type="button" data-b="" class="on">Alle</button><button type="button" data-b="1">Geblockt</button><button type="button" data-b="0">Erlaubt</button></div>
+      <input type="search" id="fSearch" placeholder="Domain suchen" aria-label="Domain suchen">
+    </form>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Zeit</th><th>Gerät</th><th>Domain</th><th>Typ</th><th>Ergebnis</th><th>IP</th><th></th></tr></thead>
+      <tbody id="logRows"></tbody>
+    </table></div>
+  </section>
+
+  <section class="grid two">
+    <div class="card">
+      <h2>Immer blockieren</h2>
+      <form class="inline" data-kind="block"><input type="text" placeholder="z. B. tiktok.com" required aria-label="Domain"><button class="btn" type="submit">Blockieren</button></form>
+      <div class="rulelist" id="rulesBlock"></div>
+    </div>
+    <div class="card">
+      <h2>Immer erlauben</h2>
+      <form class="inline" data-kind="allow"><input type="text" placeholder="z. B. ads.wichtige-seite.de" required aria-label="Domain"><button class="btn" type="submit">Erlauben</button></form>
+      <div class="rulelist" id="rulesAllow"></div>
+      <div class="sub">Hilft, wenn eine Seite oder App durch den Blocker nicht mehr richtig geht. Regeln gelten auch für alle Subdomains.</div>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/app.js"></script>
+<script>
+"use strict";
+nav("adblock");
+let hours = 24;
+let data = null;
+let chart = null;
+let setupId = null;
+const filter = { client: "", blocked: "", q: "" };
+
+function renderStats(d) {
+  const T = d.totals || {};
+  $("#sTotal").textContent = num(T.total);
+  $("#sRange").textContent = hours === 24 ? "letzte 24 Stunden" : "letzte 7 Tage";
+  $("#sBlocked").textContent = num(T.blocked);
+  $("#sPct").textContent = T.total ? `${num((100 * T.blocked) / T.total, 1)} % aller Anfragen` : "noch keine Anfragen";
+  $("#sList").textContent = num(d.list.count);
+  $("#sListAge").textContent = d.list.updated ? `Domains · aktualisiert ${ago(d.list.updated, d.now)}` : "wird geladen …";
+  const active = d.clients.filter((c) => !c.disabled);
+  $("#sClients").textContent = num(active.length);
+  $("#sClientsSub").textContent = `${d.clients.filter((c) => c.last_seen && d.now - c.last_seen < 3600).length} in der letzten Stunde aktiv`;
+
+  const paused = d.paused_until && d.paused_until > d.now;
+  $("#statePill").innerHTML = paused
+    ? `<span class="pill warn">pausiert bis ${new Date(d.paused_until * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>`
+    : `<span class="pill good">Werbeblocker aktiv</span>`;
+  const banners = [];
+  if (d.list.error) banners.push(["warn", `Sperrliste: ${esc(d.list.error)}`]);
+  if (!d.clients.length) banners.push(["info", "Noch kein Gerät eingerichtet. Lege unten ein Gerät an (z. B. „Handy“) und folge der Anleitung."]);
+  $("#banners").innerHTML = banners.map(([c, t]) => `<div class="banner ${c}">${t}</div>`).join("");
+}
+
+function renderChart(d) {
+  if (typeof Chart === "undefined") return;
+  const pts = d.timeline;
+  const labels = pts.map((p) => {
+    const t = new Date(p.t * 1000);
+    return hours <= 48 ? t.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+      : t.toLocaleDateString("de-DE", { weekday: "short", hour: "2-digit" });
+  });
+  const ds = [
+    { label: "Erlaubt", data: pts.map((p) => p.total - p.blocked), backgroundColor: css("--c1"), borderRadius: 2, stack: "s" },
+    { label: "Geblockt", data: pts.map((p) => p.blocked), backgroundColor: css("--c3"), borderRadius: 2, stack: "s" },
+  ];
+  if (chart) { chart.data.labels = labels; chart.data.datasets = ds; chart.update("none"); return; }
+  chart = new Chart($("#chTimeline"), {
+    type: "bar", data: { labels, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { labels: { boxWidth: 10, boxHeight: 10, color: css("--muted") } } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: css("--muted"), maxTicksLimit: 12 } },
+        y: { stacked: true, beginAtZero: true, grid: { color: css("--line") }, ticks: { color: css("--muted"), precision: 0 } },
+      },
+    },
+  });
+}
+
+function renderClients(d) {
+  $("#clientRows").innerHTML = d.clients.map((c) => `
+    <tr>
+      <td><span class="dot ${c.last_seen && d.now - c.last_seen < 600 ? "on" : ""}"></span><b>${esc(c.name)}</b></td>
+      <td>${c.disabled ? '<span class="pill bad">gesperrt</span>' : '<span class="pill good">aktiv</span>'}</td>
+      <td>${ago(c.last_seen, d.now)}</td>
+      <td>${ipCell(c.last_ip)}</td>
+      <td>${num(c.queries)}</td>
+      <td>${num(c.blocked)}${c.queries ? ` <span class="muted">(${num((100 * c.blocked) / c.queries)} %)</span>` : ""}</td>
+      <td class="act">
+        <button class="btn small ghost" data-act="setup" data-id="${c.id}">Einrichten</button>
+        ${c.disabled
+          ? `<button class="btn small ghost" data-act="enable" data-id="${c.id}">Wieder zulassen</button>`
+          : `<button class="btn small ghost danger" data-act="disable" data-id="${c.id}">Rauswerfen</button>`}
+        <button class="btn small ghost danger" data-act="delete" data-id="${c.id}" data-name="${esc(c.name)}">Löschen</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="7" class="empty">Noch keine Geräte.</td></tr>`;
+
+  const sel = $("#fClient");
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">Alle Geräte</option>` + d.clients.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  sel.value = cur;
+  if (setupId) showSetup(setupId, false);
+}
+
+function showSetup(id, scroll = true) {
+  const c = data && data.clients.find((x) => x.id === Number(id));
+  if (!c) { $("#setup").hidden = true; setupId = null; return; }
+  setupId = c.id;
+  $("#setup").hidden = false;
+  $("#setupName").textContent = c.name;
+  $("#setupUrl").value = c.doh_url;
+  $("#iosLink").href = c.ios_url;
+  $("#macLink").href = c.ios_url;
+  if (scroll) $("#setup").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function topList(el, items, kind) {
+  el.innerHTML = items.map((x) => `
+    <div class="item"><span class="name" title="${esc(x.qname)}">${esc(x.qname)}</span><span class="n">${num(x.n)}</span>
+      <button class="btn small ghost${kind === "block" ? " danger" : ""}" data-act="rule" data-kind="${kind}" data-domain="${esc(x.qname)}">${kind === "block" ? "Blockieren" : "Erlauben"}</button></div>`).join("")
+    || `<div class="empty">Noch nichts.</div>`;
+}
+
+function renderRules(d) {
+  const chip = (kind, dom) => `<span>${esc(dom)}<button title="entfernen" data-act="unrule" data-kind="${kind}" data-domain="${esc(dom)}" aria-label="${esc(dom)} entfernen">×</button></span>`;
+  $("#rulesBlock").innerHTML = d.rules.block.map((x) => chip("block", x)).join("") || '<span class="muted" style="background:none">keine</span>';
+  $("#rulesAllow").innerHTML = d.rules.allow.map((x) => chip("allow", x)).join("") || '<span class="muted" style="background:none">keine</span>';
+}
+
+async function loadLog() {
+  const p = new URLSearchParams({ limit: "200" });
+  if (filter.client) p.set("client", filter.client);
+  if (filter.blocked) p.set("blocked", filter.blocked);
+  if (filter.q) p.set("q", filter.q);
+  const r = await api(`/api/adblock/log?${p}`);
+  $("#logRows").innerHTML = r.items.map((x) => `
+    <tr>
+      <td>${new Date(x.ts * 1000).toLocaleTimeString("de-DE")}</td>
+      <td>${esc(x.client_name || "–")}</td>
+      <td class="wrap mono">${esc(x.qname)}</td>
+      <td class="muted">${esc(x.qtype)}</td>
+      <td>${x.blocked ? `<span class="pill bad">geblockt</span> <span class="muted">${esc(x.reason || "")}</span>` : `<span class="pill good">ok</span>${x.reason ? ` <span class="muted">${esc(x.reason)}</span>` : ""}`}</td>
+      <td>${ipCell(x.ip)}</td>
+      <td class="act">${x.blocked
+        ? `<button class="btn small ghost" data-act="rule" data-kind="allow" data-domain="${esc(x.qname)}">Erlauben</button>`
+        : `<button class="btn small ghost danger" data-act="rule" data-kind="block" data-domain="${esc(x.qname)}">Blockieren</button>`}</td>
+    </tr>`).join("") || `<tr><td colspan="7" class="empty">Keine Anfragen gefunden.</td></tr>`;
+}
+
+async function refresh() {
+  try {
+    data = await api(`/api/adblock?hours=${hours}`);
+    renderStats(data);
+    renderChart(data);
+    renderClients(data);
+    topList($("#topBlocked"), data.top_blocked, "allow");
+    topList($("#topAllowed"), data.top_allowed, "block");
+    renderRules(data);
+    await loadLog();
+  } catch (e) {
+    $("#banners").innerHTML = `<div class="banner bad">Fehler: ${esc(e.message)}</div>`;
+  }
+}
+
+// --- Bedienung -------------------------------------------------------------------
+const actions = {
+  setup: (ds) => showSetup(ds.id),
+  disable: async (ds) => { await post("/api/adblock/client", { action: "disable", id: Number(ds.id) }); toast("Gerät rausgeworfen – es bekommt keine Antworten mehr."); refresh(); },
+  enable: async (ds) => { await post("/api/adblock/client", { action: "enable", id: Number(ds.id) }); toast("Gerät wieder zugelassen."); refresh(); },
+  delete: async (ds) => {
+    if (!confirm(`„${ds.name}" endgültig löschen? Die Adresse funktioniert danach nicht mehr.`)) return;
+    await post("/api/adblock/client", { action: "delete", id: Number(ds.id) });
+    if (setupId === Number(ds.id)) { setupId = null; $("#setup").hidden = true; }
+    refresh();
+  },
+  rule: async (ds) => { await post("/api/adblock/rule", { kind: ds.kind, domain: ds.domain, add: true }); toast(`${ds.domain} wird ab jetzt ${ds.kind === "block" ? "blockiert" : "erlaubt"}.`); refresh(); },
+  unrule: async (ds) => { await post("/api/adblock/rule", { kind: ds.kind, domain: ds.domain, add: false }); refresh(); },
+};
+document.querySelectorAll(".card").forEach((c) => onAction(c, actions));
+
+$("#addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const r = await post("/api/adblock/client", { action: "add", name: $("#newName").value });
+    $("#newName").value = "";
+    setupId = r.client.id;
+    await refresh();
+    showSetup(r.client.id);
+  } catch (err) { toast(err.message); }
+});
+$$("form[data-kind]").forEach((f) => f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const inp = $("input", f);
+  try {
+    await post("/api/adblock/rule", { kind: f.dataset.kind, domain: inp.value, add: true });
+    inp.value = "";
+    refresh();
+  } catch (err) { toast(err.message); }
+}));
+$("#copyUrl").addEventListener("click", () => copyText($("#setupUrl").value));
+$("#setupTabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  $$("#setupTabs button").forEach((x) => x.classList.toggle("on", x === b));
+  $$("#setup .tabbody").forEach((x) => { x.hidden = x.dataset.t !== b.dataset.t; });
+});
+// passenden Reiter fürs aktuelle Gerät vorwählen
+const ua = navigator.userAgent;
+const pre = /iPhone|iPad/.test(ua) ? "iphone" : /Android/.test(ua) ? "android" : /Macintosh/.test(ua) ? "mac" : "pc";
+$(`#setupTabs button[data-t="${pre}"]`).click();
+
+$("#range").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  hours = Number(b.dataset.h);
+  $$("#range button").forEach((x) => x.classList.toggle("on", x === b));
+  refresh();
+});
+$("#pause").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  await post("/api/adblock/pause", { minutes: Number(b.dataset.m) }).catch((err) => toast(err.message));
+  toast(Number(b.dataset.m) ? `Werbeblocker für ${b.textContent.replace(" aus", "")} pausiert.` : "Werbeblocker ist wieder an.");
+  refresh();
+});
+$("#refreshList").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  e.target.textContent = "Lädt …";
+  try {
+    const r = await post("/api/adblock/refresh");
+    toast(r.list.error ? `Fehler: ${r.list.error}` : `${num(r.list.count)} Domains geladen.`);
+  } catch (err) { toast(err.message); }
+  e.target.disabled = false;
+  e.target.textContent = "Jetzt aktualisieren";
+  refresh();
+});
+$("#fClient").addEventListener("change", (e) => { filter.client = e.target.value; loadLog().catch(() => {}); });
+$("#fBlocked").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  filter.blocked = b.dataset.b;
+  $$("#fBlocked button").forEach((x) => x.classList.toggle("on", x === b));
+  loadLog().catch(() => {});
+});
+let searchTimer;
+$("#fSearch").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { filter.q = e.target.value.trim(); loadLog().catch(() => {}); }, 300);
+});
+$("#logFilter").addEventListener("submit", (e) => e.preventDefault());
+
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 15000);
+</script>
+</body>
+</html>

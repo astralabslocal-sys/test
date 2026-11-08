@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>WiFiMon – Anmelden</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0'/%3E%3Ccircle cx='12' cy='19' r='1.2' fill='%232563eb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+  .box { width: 100%; max-width: 360px; }
+  .box .card { padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  h1 svg { color: var(--accent); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 18px 0 6px; }
+  input[type=password] { width: 100%; font-size: 16px; padding: 10px 12px; }
+  .btn { width: 100%; margin-top: 14px; padding: 10px; font-size: 15px; }
+  #err { margin: 14px 0 0; }
+</style>
+</head>
+<body>
+<main class="box">
+  <div class="card">
+    <h1>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0"/><circle cx="12" cy="19" r="1.2" fill="currentColor"/></svg>
+      WiFiMon
+    </h1>
+    <div class="sub">Privat – nur für deine Geräte.</div>
+    <form id="f">
+      <label for="pw">Passwort</label>
+      <input type="password" id="pw" autocomplete="current-password" required autofocus>
+      <button class="btn" type="submit" id="go">Anmelden</button>
+      <div class="banner bad" id="err" hidden></div>
+    </form>
+  </div>
+  <p class="sub" style="text-align:center">Jede Anmeldung wird mit IP-Adresse protokolliert.</p>
+</main>
+<script>
+"use strict";
+const f = document.getElementById("f");
+const err = document.getElementById("err");
+const go = document.getElementById("go");
+f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  err.hidden = true;
+  go.disabled = true;
+  go.textContent = "Prüfe …";
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-WiFiMon": "1" },
+      body: JSON.stringify({ password: document.getElementById("pw").value }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) { location.href = "/"; return; }
+    err.textContent = data.error || `Fehler (HTTP ${r.status})`;
+    err.hidden = false;
+    document.getElementById("pw").select();
+  } catch (x) {
+    err.textContent = "Keine Verbindung zum Server.";
+    err.hidden = false;
+  } finally {
+    go.disabled = false;
+    go.textContent = "Anmelden";
+  }
+});
+</script>
+</body>
+</html>
